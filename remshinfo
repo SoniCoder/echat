@@ -1,0 +1,1 @@
+erl -pa ebin -sname node2 -remsh node1@GGN000827

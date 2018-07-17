@@ -1,0 +1,15 @@
+Client can do connect and see live messages
+
+All Messages Need to be stored in a message list
+Message will have timestamp and who said so .. need a record
+
+Server Needs List of Clients to reply to and hence a list of clients
+
+
+Client can connect and type messages
+Typing Message will require a send call
+
+DS Required
+
+List of Messages
+List of Clients
