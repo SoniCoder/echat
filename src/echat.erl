@@ -5,7 +5,7 @@
 -export([init/1, handle_call/3, handle_cast/2]).
 
 -record(message, {timestamp, name, text, private=false}).
--record(state, {msglist, scribers, clientinfo, maxclients=4}).
+-record(state, {msglist, scribers, clientinfo, maxclients=2}).
 
 %%% Client Utility Functions
 
@@ -15,6 +15,16 @@ create_message(Message, Sender) -> create_message(Message, Sender, false).
 
 create_message(Message, Sender, Private) ->
     #message{timestamp=current_timestamp(),name=Sender, text=Message, private=Private}.
+
+printStringList([]) -> ok;
+printStringList([H|T]) ->
+    printMessage(H),
+    printStringList(T).
+
+printList([]) -> ok;
+printList([H|T]) ->
+    io:format("~p~n", [H]),
+    printList(T).
 
 %%% Client API
 printMessage(M) ->
@@ -36,16 +46,17 @@ keep_receiving() ->
     after infinity -> erlang:error(timeout)
     end.
 
-printStringList([]) -> ok;
-printStringList([H|T]) ->
-    printMessage(H),
-    printStringList(T).
-
 connect(output, Name) ->
     Pid = whereis(chatsv),
     M = gen_server:call(Pid, {subscribe, Name}),
-    printStringList(M),
-    keep_receiving();
+    case M of
+        {ok, MList} -> 
+            printStringList(MList),
+            keep_receiving();
+        {error, ErrMsg} ->
+            io:format(ErrMsg)
+    end;
+
 
 connect(input, Name) ->
     Pid = whereis(chatsv),
@@ -58,6 +69,9 @@ send_to_server(Name, Pid) ->
     Text = io:get_line("enter message> "),
     {ok, RE_PRV} = re:compile("/w (\\w+) (.+\\n)"),
     case Text of
+        "/l" ++ _ ->
+            ClientList = gen_server:call(Pid, {getclist}),
+            printList(ClientList);
         "/w" ++ _ -> 
             {match, [ReceiverName | [MainText]]} =  re:run(Text, RE_PRV , [{capture, all_but_first, list}]),
             gen_server:call(Pid, {unicast, create_message(MainText, Name, true), ReceiverName});
@@ -95,6 +109,9 @@ handle_call({broadcast, Message}, _, S = #state{msglist=MList, scribers=ScriberL
     send_to_clients(Message, ScriberList),
     {reply, "Sent", S#state{msglist=NewMList}};
 
+handle_call({getclist}, _, S = #state{clientinfo=Dict}) ->
+    {reply, dict:fetch_keys(Dict), S};
+
 handle_call({disconnect, Name}, _, S = #state{scribers=ScriberList, clientinfo=Dict}) ->
     Receiver = dict:fetch(Name, Dict),
     NewScriberList = lists:delete(Receiver, ScriberList),
@@ -103,9 +120,16 @@ handle_call({disconnect, Name}, _, S = #state{scribers=ScriberList, clientinfo=D
     {reply, "Sent", S#state{scribers=NewScriberList, clientinfo=NewDict}};
 
 handle_call({subscribe, Name}, From, S = #state{msglist=MList, scribers=ScriberList, clientinfo=Dict}) ->
-    NewScriberList = [From | ScriberList],
-    NewDict = dict:store(Name, From, Dict),
-    {reply, lists:reverse(lists:sublist(lists:reverse(MList), 3)), S#state{scribers=NewScriberList, clientinfo=NewDict}};
+    if
+        length(ScriberList) == S#state.maxclients ->
+                {reply, {error, "Error: Room is full!"} , S};
+            
+        true ->
+                NewScriberList = [From | ScriberList],
+                NewDict = dict:store(Name, From, Dict),
+                {reply, {ok, lists:reverse(lists:sublist(lists:reverse(MList), 3))}, S#state{scribers=NewScriberList, clientinfo=NewDict}}
+    end;
+    
 
 handle_call(terminate, From, _) ->
     gen_server:reply(From, ok),
