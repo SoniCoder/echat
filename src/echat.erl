@@ -7,6 +7,13 @@
 -record(message, {timestamp, name, text, private=false}).
 -record(state, {msglist, scribers, clientinfo, maxclients=4}).
 
+%%% Client Utility Functions
+
+current_timestamp() -> io_lib:format("[~2..0b:~2..0b:~2..0b]", tuple_to_list(time())).
+
+create_announcement(Message) ->
+    #message{timestamp=current_timestamp(),name="*Server* ", text=Message}.
+
 %%% Client API
 printMessage(M) ->
         if
@@ -20,7 +27,6 @@ printMessage(M) ->
 keep_receiving() ->
     receive
         {_, M} ->
-            io:format("~p~n", [M]),
             printMessage(M),            
             keep_receiving()
     after infinity -> erlang:error(timeout)
@@ -40,7 +46,7 @@ connect(output, Name) ->
 connect(input, Name) ->
     Pid = whereis(chatsv),
     io:format("Welcome to E-Chat!~n~n"),
-    gen_server:call(Pid, {broadcast, #message{timestamp=io_lib:format("[~2..0b:~2..0b:~2..0b]", tuple_to_list(time())),name="*Server* ", text=lists:concat([Name, " has entered the server.\n"])}}),
+    gen_server:call(Pid, {broadcast, create_announcement(lists:concat([Name, " has entered the server.\n"]))}),
     send_to_server(Name, Pid),
     ok.
 
