@@ -11,8 +11,10 @@
 
 current_timestamp() -> io_lib:format("[~2..0b:~2..0b:~2..0b]", tuple_to_list(time())).
 
-create_announcement(Message) ->
-    #message{timestamp=current_timestamp(),name="*Server* ", text=Message}.
+create_message(Message, Sender) -> create_message(Message, Sender, false).
+
+create_message(Message, Sender, Private) ->
+    #message{timestamp=current_timestamp(),name=Sender, text=Message, private=Private}.
 
 %%% Client API
 printMessage(M) ->
@@ -26,6 +28,8 @@ printMessage(M) ->
 
 keep_receiving() ->
     receive
+        {_, quit} ->
+            ok;
         {_, M} ->
             printMessage(M),            
             keep_receiving()
@@ -46,7 +50,7 @@ connect(output, Name) ->
 connect(input, Name) ->
     Pid = whereis(chatsv),
     io:format("Welcome to E-Chat!~n~n"),
-    gen_server:call(Pid, {broadcast, create_announcement(lists:concat([Name, " has entered the server.\n"]))}),
+    gen_server:call(Pid, {broadcast, create_message(lists:concat([Name, " has entered the server.\n"]), "*Server*")}),
     send_to_server(Name, Pid),
     ok.
 
@@ -56,11 +60,13 @@ send_to_server(Name, Pid) ->
     case Text of
         "/w" ++ _ -> 
             {match, [ReceiverName | [MainText]]} =  re:run(Text, RE_PRV , [{capture, all_but_first, list}]),
-            gen_server:call(Pid, {unicast, #message{timestamp=io_lib:format("[~2..0b:~2..0b:~2..0b]", tuple_to_list(time())), name=Name, text=MainText, private=true}, ReceiverName});
+            gen_server:call(Pid, {unicast, create_message(MainText, Name, true), ReceiverName});
         "/q"++ _ ->
+            gen_server:call(Pid, {disconnect, Name}),
+            gen_server:call(Pid, {broadcast, create_message(lists:concat([Name, " has left the server.\n"]), "*Server*")}),
             exit(normal);
         _ ->
-            gen_server:call(Pid, {broadcast, #message{timestamp=io_lib:format("[~2..0b:~2..0b:~2..0b]", tuple_to_list(time())), name=Name, text=Text}})
+            gen_server:call(Pid, {broadcast, create_message(Text, Name)})
     end,
     send_to_server(Name, Pid).
 
@@ -68,8 +74,7 @@ close_server() ->
     gen_server:call(whereis(chatsv), {terminate}).
 
 start_link() ->
-    {ok, _} = gen_server:start_link({local, chatsv}, ?MODULE, [], []).
-    %register(chatsv, Pid).
+    gen_server:start_link({local, chatsv}, ?MODULE, [], []).
 
 %%% Server functions
 init([]) -> {ok,#state{msglist=[], scribers=[], clientinfo=dict:new()}}. %% no treatment of info here!
@@ -80,15 +85,22 @@ send_to_clients(Message, [Scriber | ScriberList]) ->
     gen_server:reply(Scriber, Message),
     send_to_clients(Message, ScriberList).
 
-handle_call({unicast, Message, ReceiverName}, From, S = #state{clientinfo=Dict}) ->
+handle_call({unicast, Message, ReceiverName}, _, S = #state{clientinfo=Dict}) ->
     Receiver = dict:fetch(ReceiverName, Dict),
     send_to_clients(Message, [Receiver]),
     {reply, "Sent", S};
 
-handle_call({broadcast, Message}, From, S = #state{msglist=MList, scribers=ScriberList}) ->
+handle_call({broadcast, Message}, _, S = #state{msglist=MList, scribers=ScriberList}) ->
     NewMList = lists:reverse([ Message |lists:reverse(MList)]),
     send_to_clients(Message, ScriberList),
     {reply, "Sent", S#state{msglist=NewMList}};
+
+handle_call({disconnect, Name}, _, S = #state{scribers=ScriberList, clientinfo=Dict}) ->
+    Receiver = dict:fetch(Name, Dict),
+    NewScriberList = lists:delete(Receiver, ScriberList),
+    NewDict = dict:erase(Name, Dict),
+    send_to_clients(quit, [Receiver]),
+    {reply, "Sent", S#state{scribers=NewScriberList, clientinfo=NewDict}};
 
 handle_call({subscribe, Name}, From, S = #state{msglist=MList, scribers=ScriberList, clientinfo=Dict}) ->
     NewScriberList = [From | ScriberList],
